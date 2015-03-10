@@ -1,8 +1,8 @@
 # Bulk Indexing for Elasticsearch with ZeroMQ - PHP
 * high performance bulk indexing for elasticsearch
-* parallel pipeline processing
-* push-pull pattern of zeromq (ventilator, worker, sink)
-* pub-sub pattern of zeromq for handling signal
+* parallel pipeline processing with zeromq
+ - push-pull pattern - ventilator, worker, sink
+ - pub-sub pattern for handling signal
 * river, mapper
 * index toggling
 
