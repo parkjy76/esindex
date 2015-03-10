@@ -3,6 +3,7 @@
 * parallel pipeline processing with zeromq
  - push-pull pattern - ventilator, worker, sink
  - pub-sub pattern for handling signal
+* use PCNTL on PHP 
 * river, mapper
 * index toggling
 
