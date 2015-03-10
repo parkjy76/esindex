@@ -3,6 +3,7 @@
 * parallel pipeline processing
 * push-pull pattern of zeromq (ventilator, worker, sink)
 * pub-sub pattern of zeromq for handling signal
+* river, mapper
 * index toggling
 
 ## Index Toggling
