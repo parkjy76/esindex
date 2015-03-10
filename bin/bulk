@@ -1,0 +1,421 @@
+#!/usr/bin/env php
+<?php
+/* vim: set expandtab tabstop=4 shiftwidth=4 softtabstop=4: */
+/**
+ * 
+ * PHP 5.4 Later
+ * 
+ * @author     Junyong Park
+ * @copyright  2013
+ */
+ 
+// set ini
+ini_set('display_errors', 1);
+ini_set('mbstring.language', 'Japanese');
+ini_set('mbstring.internal_encoding', 'UTF-8');
+
+// define constant
+define('_VERSION', '0.8');
+define('MAIL_ADDRESS', 'admin@test.com');
+define('BASE_DIR', dirname(dirname(__FILE__)) . '/');
+define('ETC_DIR', BASE_DIR . 'etc/');
+define('LIB_DIR', BASE_DIR . 'lib/');
+define('MOD_DIR', BASE_DIR . 'module/');
+define('LOCK_DIR', '/var/run/' . basename(BASE_DIR) . '/');
+define('DEFAULT_WORKERS', 4);
+define('DEFAULT_QUEUES', 250);
+
+/*
+// set path 
+set_include_path(
+    get_include_path()  . ':' .
+    LIB_DIR       . ':'
+);
+*/
+
+// load helper
+require_once(LIB_DIR . 'ElasticsearchIndex_Helper.php');
+
+// get options
+$argv = getopt('t:w:q:x');
+if( !isset($argv['t']) || !is_string($argv['t']) ||
+    (isset($argv['w']) && (!is_numeric($argv['w']) || $argv['w'] < 1)) ||
+    (isset($argv['q']) && (!is_numeric($argv['q']) || $argv['q'] < 1)) )
+{
+    displayUsage();
+    exit(0);
+}
+
+// declare variables
+$taskType = $argv['t'];
+$workers = isset($argv['w']) ? (int)$argv['w'] : DEFAULT_WORKERS;
+$queue = isset($argv['q']) ? (int)$argv['q'] : DEFAULT_QUEUES;
+$lock = LOCK_DIR . rtrim(basename(__FILE__), '.php').'-'.$taskType.'.lock';
+
+// check lock file
+if( file_exists($lock) )
+{
+    displayMsg("Locked! Process terminated");
+    sendMail("Locked! Process terminated");
+    exit(1);
+}
+
+require_once(LIB_DIR . 'ElasticsearchIndex_Loader.php');
+
+// parse es.ini
+if( ($esDsn = ElasticsearchIndex_Loader::esDsn($taskType)) === FALSE )
+{
+    displayMsg("es::Failed to parse ".ElasticsearchIndex_Loader::ES_INI_FILE);
+    exit(1);
+}
+
+// parse zmq.ini
+if( ($zmqDsn = ElasticsearchIndex_Loader::zmqDsn($taskType)) === FALSE )
+{
+    displayMsg("zmq::Failed to parse ".ElasticsearchIndex_Loader::ZMQ_INI_FILE);
+    exit(1);
+}
+
+// load schema json
+if( ($schema = ElasticsearchIndex_Loader::schema(@$esDsn['schema'])) === FALSE && !isset($argv['x']) )
+{
+    displayMsg("schema::Failed to load ".@$esDsn['schema']);
+    exit(1);
+}
+
+// parse mapper.ini
+if( ($mapperDsn = ElasticsearchIndex_Loader::mapperDsn($taskType)) === FALSE )
+{
+    displayMsg("mapper::Failed to parse ".ElasticsearchIndex_Loader::MAPPER_INI_FILE);
+    exit(1);
+}
+
+// parse river.ini
+if( ($riverDsn = ElasticsearchIndex_Loader::riverDsn($taskType)) === FALSE )
+{
+    displayMsg("river::Failed to parse ".ElasticsearchIndex_Loader::RIVER_INI_FILE);
+    exit(1);
+}
+
+// load query
+if( ($query = ElasticsearchIndex_Loader::query(@$riverDsn['query'])) === FALSE )
+{
+    displayMsg("query::Failed to load ".@$riverDsn['query']);
+    exit(1);
+}
+
+// load mapper/river
+$mapper = ElasticsearchIndex_Loader::mapper($mapperDsn);
+$river = ElasticsearchIndex_Loader::river($riverDsn, $query);
+
+// create dsn instance
+require_once(LIB_DIR . 'Elasticsearch_Dsn.php');
+require_once(LIB_DIR . 'Elasticsearch_Alias.php');
+require_once(LIB_DIR . 'Elasticsearch_Index.php');
+
+try
+{
+    // create instance
+    $dsn = new Elasticsearch_Dsn($esDsn);
+}
+catch( Exception $e )
+{
+    displayMsg("dsn(es)::".$e->getMessage());
+    exit(1);
+}
+
+// clear
+unset($esDsn);
+
+try
+{
+    // create instance
+    $alias = new Elasticsearch_Alias($dsn);
+
+    // get current index number
+    $curIndexNumber = $alias->getCurrentIndexNumber();
+
+    // get new index number
+    if( !isset($argv['x']) ) $newIndexNumber = $alias->getToggleIndexNumber($curIndexNumber);
+    else $newIndexNumber = $curIndexNumber;
+}
+catch( Exception $e )
+{
+    displayMsg("alias::".$dsn->getAlias().' - '. $e->getMessage());
+    exit(1);
+}
+
+// set new index number to dsn
+$dsn->setIndexNumber($newIndexNumber);
+
+try
+{
+    // create instance
+    $index = new Elasticsearch_Index($dsn);
+
+    if( !isset($argv['x']) )
+    {
+        // if index exists then delete index
+        if( $index->exist() ) $index->delete();
+
+        // create index
+        $index->create($schema);
+    }
+
+    // set refresh interval -1
+    $index->setRefreshInterval('-1');
+
+    // set merge.policy.merge_factor 30
+//    $index->setMergeFactor(30);
+}
+catch( Exception $e )
+{
+    displayMsg("index::".$dsn->getIndex().' - '.$e->getMessage());
+    exit(1);
+}
+
+// clear
+unset($schema);
+
+// turn on dsn round robin
+$dsn->setRoundRobin(TRUE);
+
+// fork sink
+require_once(LIB_DIR . 'ElasticsearchIndex_Sink.php');
+$pid = pcntl_fork();
+if( !$pid )
+{
+    if( !ElasticsearchIndex_Helper::writePid2Lock($lock, posix_getpid()) )
+    {
+        displayMsg("sink::Failed to open lock file");
+        exit(1);
+    }
+
+    $status = 0;
+
+    try
+    {
+        $sink = new ElasticsearchIndex_Sink($workers, $taskType);
+        $sink->open($zmqDsn);
+        $sink->run();
+        $sink->close();
+    }
+    catch( Exception $e )
+    {
+        displayMsg("sink::".$e->getMessage());
+        $status = 1;
+    }
+
+    exit($status);
+}
+
+sleep(1);
+
+// fork workers
+require_once(LIB_DIR . 'ElasticsearchIndex_Worker.php');
+for( $workerNumber = 1; $workerNumber <= $workers; $workerNumber++ )
+{
+    $pid = pcntl_fork();
+    if( !$pid )
+    {
+        if( !ElasticsearchIndex_Helper::writePid2Lock($lock, posix_getpid()) )
+        {
+            displayMsg("worker$workerNumber::Failed to open lock file");
+            exit(1);
+        }
+        
+        $status = 0;
+
+        try
+        {
+            $worker = new ElasticsearchIndex_Worker($queue, $workerNumber, $taskType);
+            $worker->open($zmqDsn);
+
+            $ret = $worker->run($dsn, $mapper);
+            if( !$ret ) $status = 1;
+
+            $worker->close();
+        }
+        catch( Exception $e )
+        {
+            displayMsg("worker$workerNumber::".$e->getMessage());
+            $status = 1;
+        }
+
+        exit($status);
+    }
+
+    usleep(10000);
+}
+
+// clear
+unset($mapperDsn);
+
+sleep(2);
+
+if( !ElasticsearchIndex_Helper::checkProcState($lock, $workers) )
+{
+    ElasticsearchIndex_Helper::killChildProcs($lock);
+    exit(1);
+}
+
+// ventilator
+$procStatus = TRUE;
+require_once(LIB_DIR . 'ElasticsearchIndex_Ventilator.php');
+try
+{
+    $ventilator = new ElasticsearchIndex_Ventilator($workers, $taskType);
+    $ventilator->open($zmqDsn);
+    sleep(1);
+    $ret = $ventilator->run($river);
+    if( !$ret ) $procStatus = FALSE;
+    $ventilator->close();
+}
+catch( Exception $e )
+{
+    displayMsg("ventilator::".$e->getMessage());
+    ElasticsearchIndex_Helper::killChildProcs($lock);
+
+    $procStatus = FALSE;
+}
+
+// clear
+unset($riverDsn, $query);
+
+// wait for all of child processes to finish
+while( pcntl_waitpid(0, $status) != -1 )
+{
+    // returns the return code of a terminated child
+    if( pcntl_wexitstatus($status) !== 0 ) $procStatus = FALSE;
+}
+
+// check status of process 
+if( !$procStatus )
+{
+    if( isset($e) && $e instanceof Exception ) $msg = $e->getMessage();
+    else $msg = 'Process aborted';
+
+    sendMail($msg);
+    exit(1);
+}
+
+// turn off dsn round robin
+$dsn->setRoundRobin(FALSE);
+
+try
+{
+    // set refresh interval 1s(default)
+    $index->setRefreshInterval('1s');
+
+    // set merge.policy.merge_factor 10(default)
+//    $index->setMergeFactor(10);
+}
+catch( Exception $e )
+{
+    displayMsg("index::".$dsn->getIndex().' - '.$e->getMessage());
+    exit(1);
+}
+
+try
+{
+    // change index to new one in alias
+    if( $curIndexNumber !== $newIndexNumber ) $alias->alterIndex($curIndexNumber, $newIndexNumber);
+}
+catch( Exception $e )
+{
+    displayMsg("alias::".$dsn->getAlias()."($curIndexNumber->$newIndexNumber) - ". $e->getMessage());
+    exit(1);
+}
+
+// remove lock
+@unlink($lock);
+
+sleep(1);
+
+// check lock
+if( file_exists($lock) )
+{
+    displayMsg("Failed to unlink lock file");
+    exit(1);
+}
+
+// close old index
+if( strlen($curIndexNumber) && $curIndexNumber != $newIndexNumber )
+{
+    // change index to old one for closing index
+    $dsn->setIndexNumber($curIndexNumber);
+
+    try
+    {
+        // flush data from heap
+        $index->flush();
+
+        // clear cache from heap
+        $index->clearCache();
+
+        // close old index
+        $index->close();
+    }
+    catch( Exception $e )
+    {
+        displayMsg("index::".$dsn->getIndex().' - '.$e->getMessage());
+        exit(1);
+    }
+}
+
+exit(0);
+
+
+
+
+
+/**
+ * displayMsg
+ * 
+ * @param string $msg
+ */
+function displayMsg( $msg )
+{
+    global $taskType;
+
+    ElasticsearchIndex_Helper::displayMsg(posix_getpid().'('.posix_getpid().') '.$taskType.'::'.$msg, FALSE);
+}
+
+/**
+ * sendMail
+ */
+function sendMail( $msg )
+{
+    global $taskType;
+
+    $pw = posix_getpwuid(posix_getuid());
+    $hostname = php_uname('n');
+
+    $subject = "Elasticsearchインデックス処理の異常検知({$hostname})";
+    $body  = 'Date : ' . date('Y-m-d H:i:s') . PHP_EOL;
+    $body .= "Task type : {$taskType}" . PHP_EOL;
+    $body .= "Message : {$msg}" . PHP_EOL;
+    $body .= PHP_EOL;
+    $body .= '詳細は/val/log/esindex/のlogを確認してください。' . PHP_EOL;
+    $body .= '再実行の際にはプロセスとlockファイルの有無を確認してください。' . PHP_EOL;
+    $body .= '※プロセスが生きている場合はlockファイルのPIDを参考し、killしてから再実行してください。';
+
+    ElasticsearchIndex_Helper::sendMail(['to' => MAIL_ADDRESS, 'from' => "{$pw['name']}@{$hostname}"], $subject, $body);
+}
+
+/**
+ * displayUsage
+ */
+function displayUsage()
+{
+    echo 'Bulk Indexing Tool for Elasticsearch - v'._VERSION.PHP_EOL;
+    echo 'Copyright(c) 2013-'.date('Y').' XXXXX'.PHP_EOL;
+    echo PHP_EOL;
+    echo 'Usage: '.basename($_SERVER['PHP_SELF']).' [OPTIONS]'.PHP_EOL;
+    echo '  -t <string>    Task type'.PHP_EOL;
+    echo '  -w <number>    Number of workers. Defaults to '.DEFAULT_WORKERS.PHP_EOL;
+    echo '  -q <number>    Size of queue. Defaults to '.DEFAULT_QUEUES.PHP_EOL;
+//     echo '  -s <filename>  SQL to use for MySQL query'.PHP_EOL;
+//     echo '  -o             Optimize index'.PHP_EOL;
+    echo '  -x             No (re)create index for updating and deleting'.PHP_EOL;
+}
