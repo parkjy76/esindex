@@ -45,9 +45,13 @@ base directory is etc/. settings are classified by Task type
  - sink - sink access point
  - controller - controller access point
 
-## Index Toggling
--x オプションを使うと指定したindexに対してbulk処理を行う  
-指定されていない場合は（基本動作）はindexをフル更新する。  
-フル更新のメカニズムは新しいindexを作って既存のindexをcloseする。  
-index名の後ろに0または1を付け0と1間のtoggleで処理を行うためaliasを使わなければいけない。  
+## Index Toggling and Alias
+if you use -x option, the bulk indexing is performed to defined index.  
+unless you use -x option, it creates new index and the bulk indexing(full indexing) is performed to new one.  
+full indexing mechanism is
+if new index created, it closes old one
+when creating index, index's suffix append a number(0 or 1)
+if current index's suffix is 0, it creates 1 - index toggling
+so you should use index-alias of elasticsearch because the index's name is changed every indexing times.
+request to index-alias.
 <p align="center"><img src="http://blogfiles.naver.net/20140306_124/parkjy76_13940786232946Tk1H_GIF/alias1.gif" alt="index toggling"></p>
