@@ -48,10 +48,10 @@ base directory is etc/. settings are classified by Task type
 ## Index Toggling and Alias
 if you use -x option, the bulk indexing is performed to defined index.  
 unless you use -x option, it creates new index and the bulk indexing(full indexing) is performed to new one.  
-full indexing mechanism is
-if new index created, it closes old one
-when creating index, index's suffix append a number(0 or 1)
-if current index's suffix is 0, it creates 1 - index toggling
-so you should use index-alias of elasticsearch because the index's name is changed every indexing times.
+full indexing mechanism :  
+if new index created, it closes old one  
+when creating index, index's suffix append a number(0 or 1)  
+if current index's suffix is 0, it creates 1. - index toggling  
+so you should use index-alias of elasticsearch because the index's name is changed every indexing times.  
 request to index-alias.
 <p align="center"><img src="http://blogfiles.naver.net/20140306_124/parkjy76_13940786232946Tk1H_GIF/alias1.gif" alt="index toggling"></p>
