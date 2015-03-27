@@ -20,6 +20,19 @@ Usage: bulk [OPTIONS]
  -q <number> Size of queue. Defaults to 250  
  -x No (re)create index for updating and deleting  
 
+    [parkjy76@storm]$ bulk -t test
+    [XXXX-XX-XX XX:XX:XX] 22807(22807) test::ventilator::Sending tasks to 4 workers
+    [XXXX-XX-XX XX:XX:XX] 22814(22807) test::worker2::Tasks start
+    [XXXX-XX-XX XX:XX:XX] 22811(22807) test::worker1::Tasks start
+    [XXXX-XX-XX XX:XX:XX] 22817(22807) test::worker3::Tasks start
+    [XXXX-XX-XX XX:XX:XX] 22820(22807) test::worker4::Tasks start
+    [XXXX-XX-XX XX:XX:XX] 22807(22807) test::ventilator::Sent tasks(XXXXX)
+    [XXXX-XX-XX XX:XX:XX] 22811(22807) test::worker1::Tasks end
+    [XXXX-XX-XX XX:XX:XX] 22817(22807) test::worker3::Tasks end
+    [XXXX-XX-XX XX:XX:XX] 22820(22807) test::worker4::Tasks end
+    [XXXX-XX-XX XX:XX:XX] 22814(22807) test::worker2::Tasks end
+    [XXXX-XX-XX XX:XX:XX] 22808(22807) test::sink::Total(XXXXX) elapsed time: X.XXXXXXXXX sec
+
 ## Settings
 base directory is etc/. settings are classified by Task type
 * es.ini - elasticsearch settings
@@ -44,6 +57,12 @@ base directory is etc/. settings are classified by Task type
  - worker - worker access point
  - sink - sink access point
  - controller - controller access point
+
+## Test
+Indexing Server(VM) : 8 core, 4GB  
+Elasticsearch Server(VM) : 8 core, 12GB(Heap Mem:6G) * 4, RAID6  
+
+
 
 ## Index Toggling and Alias
 if you use -x option, the bulk indexing is performed to defined index.  
