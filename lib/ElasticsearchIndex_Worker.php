@@ -385,8 +385,8 @@ final class ElasticsearchIndex_Worker
                 unset($data);
                 $data = [];
             }
-            else
-            { 
+            elseif( isset($ret['items']) )
+            {
                 foreach( $ret['items'] as $value )
                 {
                     $type = key($value);
