@@ -267,6 +267,7 @@ class Elasticsearch_Index
     public function setRefreshInterval( $interval, $offset=0 )
     {
         $this->_requester->open();
+        $this->_requester->setOptions([CURLOPT_TIMEOUT => 180]);
 
         $ret = $this->_requester->put($this->_getUrl('_settings', $offset), '{"index":{"refresh_interval":"'.$interval.'"}}');
         $data = json_decode($ret, TRUE);
