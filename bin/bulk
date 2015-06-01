@@ -37,7 +37,7 @@ set_include_path(
 require_once(LIB_DIR . 'ElasticsearchIndex_Helper.php');
 
 // get options
-$argv = getopt('t:w:q:x');
+$argv = getopt('t:w:q:rx');
 if( !isset($argv['t']) || !is_string($argv['t']) ||
     (isset($argv['w']) && (!is_numeric($argv['w']) || $argv['w'] < 1)) ||
     (isset($argv['q']) && (!is_numeric($argv['q']) || $argv['q'] < 1)) )
@@ -55,9 +55,20 @@ $lock = LOCK_DIR . rtrim(basename(__FILE__), '.php').'-'.$taskType.'.lock';
 // check lock file
 if( file_exists($lock) )
 {
-    displayMsg("Locked! Process terminated");
-    sendMail("Locked! Process terminated");
-    exit(1);
+    if( isset($argv['r']) )
+    {
+        displayMsg("LOCK exists!");
+        displayMsg("Check and kill processes of previous task");
+        ElasticsearchIndex_Helper::killChildProcs($lock);
+        @unlink($lock);
+        displayMsg("Released previous LOCK");
+    }
+    else
+    {
+        displayMsg("Locked! Process terminated");
+        sendMail("Locked! Process terminated");
+        exit(1);
+    }
 }
 
 require_once(LIB_DIR . 'ElasticsearchIndex_Loader.php');
@@ -253,9 +264,12 @@ unset($mapperDsn);
 
 sleep(2);
 
+// check forked processes
 if( !ElasticsearchIndex_Helper::checkProcState($lock, $workers) )
 {
     ElasticsearchIndex_Helper::killChildProcs($lock);
+    displayMsg("Failed to check forked processes");
+    @unlink($lock);
     exit(1);
 }
 
@@ -269,6 +283,7 @@ try
     sleep(1);
     $ret = $ventilator->run($river);
     if( !$ret ) $procStatus = FALSE;
+    sleep(1);
     $ventilator->close();
 }
 catch( Exception $e )
@@ -396,9 +411,10 @@ function sendMail( $msg )
     $body .= "Task type : {$taskType}" . PHP_EOL;
     $body .= "Message : {$msg}" . PHP_EOL;
     $body .= PHP_EOL;
-    $body .= '詳細は/val/log/esindex/のlogを確認してください。' . PHP_EOL;
-    $body .= '再実行の際にはプロセスとlockファイルの有無を確認してください。' . PHP_EOL;
-    $body .= '※プロセスが生きている場合はlockファイルのPIDを参考し、killしてから再実行してください。';
+    $body .= '詳細はログを確認してください。' . PHP_EOL;
+    $body .= '再実行の際にはプロセスとLOCKの有無を確認してください。' . PHP_EOL;
+    $body .= '※プロセスが生きている場合はLOCKのPIDを参考し、killしてから再実行してください。' . PHP_EOL;
+    $body .= '　又は「-r」オプションで再実行してください。';
 
     ElasticsearchIndex_Helper::sendMail(['to' => MAIL_ADDRESS, 'from' => "{$pw['name']}@{$hostname}"], $subject, $body);
 }
@@ -417,5 +433,6 @@ function displayUsage()
     echo '  -q <number>    Size of queue. Defaults to '.DEFAULT_QUEUES.PHP_EOL;
 //     echo '  -s <filename>  SQL to use for MySQL query'.PHP_EOL;
 //     echo '  -o             Optimize index'.PHP_EOL;
+    echo '  -r             Release LOCK'.PHP_EOL;
     echo '  -x             No (re)create index for updating and deleting'.PHP_EOL;
 }
