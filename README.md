@@ -18,6 +18,7 @@ Usage: bulk [OPTIONS]
  -t <string> Task type  
  -w <number> Number of workers. Defaults to 4  
  -q <number> Size of queue. Defaults to 250  
+ -r Release LOCK  
  -x No (re)create index for updating and deleting  
 
     [parkjy76@storm]$ bulk -t test
